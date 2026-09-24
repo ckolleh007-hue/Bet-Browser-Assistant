@@ -1,0 +1,8 @@
+{
+  "name": "Remix AI Bet Browser Assistant",
+  "description": "AI-powered browser assistant that accepts betting instructions in natural language, searches a mock sportsbook, builds and verifies bet slips with automated safety barriers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
