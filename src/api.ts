@@ -121,12 +121,13 @@ export async function resetBetSlip(): Promise<BetSlipState> {
 
 export async function generateAiAutoPick(
   stake: number = 10,
-  currency: string = 'USD'
+  currency: string = 'USD',
+  optionFilter: 'all' | 'option1' | 'option2' = 'all'
 ): Promise<any> {
   const res = await fetch('/api/auto-pick/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stake, currency }),
+    body: JSON.stringify({ stake, currency, optionFilter }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to generate AI auto pick');

@@ -173,7 +173,21 @@ export class VerificationEngine {
     if (!a || !b) return false;
     const cleanA = a.toLowerCase().replace(/[^a-z0-9]/g, '');
     const cleanB = b.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+    if (cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
+      return true;
+    }
+
+    // Match Multigoals 1 & 2 format variants: (1-4),(0-2) vs (1-4) 1 & (0-2) 2
+    const isOpt2A = (a.includes('1-4') && a.includes('0-2')) || cleanA === '1402' || cleanA === '141022';
+    const isOpt2B = (b.includes('1-4') && b.includes('0-2')) || cleanB === '1402' || cleanB === '141022';
+    if (isOpt2A && isOpt2B) return true;
+
+    // Match Multigoals 0-5
+    const isOpt1A = cleanA === '05' || a.trim() === '0-5';
+    const isOpt1B = cleanB === '05' || b.trim() === '0-5';
+    if (isOpt1A && isOpt1B) return true;
+
+    return false;
   }
 }
 

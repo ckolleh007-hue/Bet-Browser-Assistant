@@ -70,18 +70,27 @@ export class SelectionValidator {
       return true;
     }
 
-    // Option 2: Multigoals 1 & Multigoals 2 -> (1-4),(0-2)
-    if (
-      (normMarket === 'multigoals1multigoals2' ||
-        normMarket === 'multigoals1multigoals' ||
-        normMarket.includes('multigoals1') ||
-        normMarket.includes('multigoals1andmultigoals') ||
-        normMarket === 'multiplegoals1multiplegoals2' ||
-        normMarket === 'multiplegoals1multiplegoals' ||
-        normMarket.includes('multiplegoals1') ||
-        normMarket.includes('multiplegoals1andmultiplegoals')) &&
-      normSel === '(1-4),(0-2)'
-    ) {
+    // Option 2: Multigoals 1 & Multigoals 2 -> (1-4),(0-2) or (1-4) 1 & (0-2) 2
+    const isOption2Market =
+      normMarket === 'multigoals1multigoals2' ||
+      normMarket === 'multigoals1multigoals' ||
+      normMarket.includes('multigoals1') ||
+      normMarket.includes('multigoals1andmultigoals') ||
+      normMarket === 'multiplegoals1multiplegoals2' ||
+      normMarket === 'multiplegoals1multiplegoals' ||
+      normMarket.includes('multiplegoals1') ||
+      normMarket.includes('multiplegoals1andmultiplegoals');
+
+    const cleanSelDigits = normSel.replace(/[^0-9]/g, '');
+    const isOption2Selection =
+      normSel === '(1-4),(0-2)' ||
+      normSel === '(1-4)1&(0-2)2' ||
+      normSel === '(1-4),(0-2)2' ||
+      cleanSelDigits === '1402' ||
+      cleanSelDigits === '141022' ||
+      (normSel.includes('1-4') && normSel.includes('0-2'));
+
+    if (isOption2Market && isOption2Selection) {
       return true;
     }
 

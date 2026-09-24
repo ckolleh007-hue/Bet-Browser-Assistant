@@ -373,4 +373,38 @@ Selection: (1-4),(0-2)`;
       expect(sel.confidence).toBeGreaterThan(0.5);
     }
   });
+
+  // 13. AI AUTO PICK: Clickable Option 1 generates only Option 1 (Multigoals 0-5)
+  it('13. AI AUTO PICK: Option 1 filter generates combinations exclusively from Multigoals 0-5 within 2.00–2.14', async () => {
+    const result = await aiAutoPickService.generateAutoPick(10, 'USD', 'option1');
+
+    expect(result.mode).toBe('AI_AUTO_PICK');
+    expect(result.selectedOption).toBe('option1');
+    expect(result.status).toBe('QUALIFIED');
+    expect(result.combinedOdds).toBeGreaterThanOrEqual(2.00);
+    expect(result.combinedOdds).toBeLessThanOrEqual(2.14);
+    expect(result.selections.length).toBeGreaterThanOrEqual(1);
+
+    for (const sel of result.selections) {
+      expect(sel.market).toBe('Multigoals');
+      expect(sel.selection).toBe('0-5');
+    }
+  });
+
+  // 14. AI AUTO PICK: Clickable Option 2 generates only Option 2 (Multigoals 1 & Multigoals 2 (1-4),(0-2))
+  it('14. AI AUTO PICK: Option 2 filter generates combinations exclusively from Multigoals 1 & Multigoals 2 (1-4),(0-2) within 2.00–2.14', async () => {
+    const result = await aiAutoPickService.generateAutoPick(10, 'USD', 'option2');
+
+    expect(result.mode).toBe('AI_AUTO_PICK');
+    expect(result.selectedOption).toBe('option2');
+    expect(result.status).toBe('QUALIFIED');
+    expect(result.combinedOdds).toBeGreaterThanOrEqual(2.00);
+    expect(result.combinedOdds).toBeLessThanOrEqual(2.14);
+    expect(result.selections.length).toBeGreaterThanOrEqual(1);
+
+    for (const sel of result.selections) {
+      expect(sel.market).toBe('Multigoals 1 & Multigoals 2');
+      expect(sel.selection).toBe('(1-4),(0-2)');
+    }
+  });
 });

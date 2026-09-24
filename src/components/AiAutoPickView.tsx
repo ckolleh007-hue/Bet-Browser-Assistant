@@ -13,9 +13,13 @@ import {
   Info,
   Layers,
   HelpCircle,
+  Check,
+  MousePointerClick,
+  Search,
+  CheckCheck,
 } from 'lucide-react';
 import { generateAiAutoPick, executeAiAutoPick, getLatestAutoPick } from '../api.ts';
-import { AiAutoPickResponse } from '../../server/src/types/index.ts';
+import { AiAutoPickResponse, CandidateCombinationAuditItem } from '../../server/src/types/index.ts';
 
 interface AiAutoPickViewProps {
   onAgentStarted: (betRequestId: string) => void;
@@ -35,35 +39,59 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
 }) => {
   const [stake, setStake] = useState<number>(10);
   const [currency] = useState<string>('USD');
+  const [selectedOptionMode, setSelectedOptionMode] = useState<'all' | 'option1' | 'option2'>('all');
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [isBuildingSlip, setIsBuildingSlip] = useState<boolean>(false);
   const [result, setResult] = useState<AiAutoPickResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeStepIndex, setActiveStepIndex] = useState<number>(-1);
   const [showCombosModal, setShowCombosModal] = useState<boolean>(false);
+  const [pickedComboId, setPickedComboId] = useState<string | null>(null);
+  const [auditTab, setAuditTab] = useState<'qualifying' | 'all'>('qualifying');
+  const [auditSearchQuery, setAuditSearchQuery] = useState<string>('');
 
-  // Real-time animation stages defined in Section 16 of the prompt
-  const initialSteps: StepItem[] = [
-    { id: '1', title: 'Scanning NiceBet...', detail: 'Events found', status: 'pending' },
-    { id: '2', title: 'Reading available markets...', detail: 'Markets found', status: 'pending' },
+  // Helper to build real-time animation stages based on chosen option
+  const getInitialSteps = (mode: 'all' | 'option1' | 'option2'): StepItem[] => [
+    { id: '1', title: 'Connecting to NiceBet (https://www.nicebet.com.lr/)...', detail: 'Live sportsbook connected', status: 'pending' },
+    { id: '2', title: 'Fetching live events from NiceBet sportsbook...', detail: 'Live matches discovered', status: 'pending' },
     {
       id: '3',
-      title: 'Finding default betting options...',
-      detail: 'Multigoals → 0-5 & Multigoals 1 & Multigoals 2 → (1-4),(0-2)',
+      title:
+        mode === 'option1'
+          ? 'Scanning Option 1: Multigoals 0-5 on NiceBet...'
+          : mode === 'option2'
+          ? 'Scanning Option 2: Multigoals 1 & Multigoals 2 on NiceBet...'
+          : 'Scanning Multigoals and Multigoals 1 & 2 on NiceBet...',
+      detail:
+        mode === 'option1'
+          ? 'Multigoals → 0-5 live markets loaded'
+          : mode === 'option2'
+          ? 'Multigoals 1 & Multigoals 2 live markets loaded'
+          : 'Live Multigoals & Multigoals 1 & 2 markets loaded',
       status: 'pending',
     },
     {
       id: '4',
-      title: 'Analyzing teams and matches...',
-      detail: 'Form, H2H, xG, defensive records & lineups',
+      title: 'Analyzing team stats, H2H & goals distribution...',
+      detail: 'Form, H2H, xG & defensive stability computed',
       status: 'pending',
     },
-    { id: '5', title: 'Generating combinations...', detail: 'Combinations evaluated', status: 'pending' },
-    { id: '6', title: 'Filtering total odds...', detail: '2.00–2.14 requirement applied', status: 'pending' },
-    { id: '7', title: 'Performing final validation...', detail: 'Selection validated', status: 'pending' },
+    {
+      id: '5',
+      title:
+        mode === 'option1'
+          ? 'Generating Option 1 combinations...'
+          : mode === 'option2'
+          ? 'Generating Option 2 combinations...'
+          : 'Evaluating candidate combinations...',
+      detail: 'Live combinations evaluated',
+      status: 'pending',
+    },
+    { id: '6', title: 'Verifying odds corridor (2.00–2.14 requirement)...', detail: '2.00 ≤ Odds ≤ 2.14 satisfied', status: 'pending' },
+    { id: '7', title: 'Backend validation (10/10 strict checks)...', detail: 'Selection verified and ready', status: 'pending' },
   ];
 
-  const [steps, setSteps] = useState<StepItem[]>(initialSteps);
+  const [steps, setSteps] = useState<StepItem[]>(() => getInitialSteps('all'));
 
   // Load latest on mount if available
   useEffect(() => {
@@ -74,13 +102,52 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
       .catch(() => {});
   }, []);
 
+  // Sync active picked combination ID when result is updated
+  useEffect(() => {
+    if (result && result.allCombinations && result.allCombinations.length > 0) {
+      const match = result.allCombinations.find(
+        (c) => c.qualifies && Math.abs(c.odds - result.combinedOdds) < 0.001
+      );
+      if (match) {
+        setPickedComboId(match.id);
+      } else {
+        const firstQual = result.allCombinations.find((c) => c.qualifies);
+        if (firstQual) setPickedComboId(firstQual.id);
+      }
+    }
+  }, [result]);
+
+  const handleSelectAuditCombo = (combo: CandidateCombinationAuditItem) => {
+    if (!result || !combo.qualifies || !combo.selections || combo.selections.length === 0) return;
+    setPickedComboId(combo.id);
+    setResult({
+      ...result,
+      status: 'QUALIFIED',
+      combinedOdds: combo.odds,
+      selections: combo.selections,
+      summary: `AI Auto Pick: Picked from Candidate Combinations Audit (${combo.summary}) yielding combined odds of ${combo.odds.toFixed(2)}.`,
+    });
+  };
+
+  const filteredAuditCombos = (result?.allCombinations || []).filter((combo) => {
+    if (auditTab === 'qualifying' && !combo.qualifies) return false;
+    if (auditSearchQuery.trim()) {
+      const q = auditSearchQuery.toLowerCase().trim();
+      return (
+        combo.summary.toLowerCase().includes(q) ||
+        (combo.reason && combo.reason.toLowerCase().includes(q))
+      );
+    }
+    return true;
+  });
+
   const handleGenerate = async () => {
     setErrorMsg(null);
     setIsAnalyzing(true);
     setResult(null);
 
-    // Reset steps
-    const newSteps: StepItem[] = initialSteps.map((s) => ({ ...s, status: 'pending' }));
+    // Reset steps dynamically for current option mode
+    const newSteps: StepItem[] = getInitialSteps(selectedOptionMode);
     setSteps(newSteps);
 
     // Step progression animation
@@ -110,7 +177,7 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
       await new Promise((r) => setTimeout(r, 450));
       runStep(6);
 
-      const res = await generateAiAutoPick(stake, currency);
+      const res = await generateAiAutoPick(stake, currency, selectedOptionMode);
 
       // Finish all steps
       setSteps((prev) => prev.map((s) => ({ ...s, status: 'completed' })));
@@ -187,44 +254,201 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
           </div>
         </div>
 
-        {/* Section 15 Default Betting Options Display */}
-        <div className="mt-6 pt-6 border-t border-zinc-800/80 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-zinc-950/50 p-4 rounded-xl border border-zinc-800/60 flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-bold text-emerald-400 shrink-0">
-              01
+        {/* Section 15 Default Betting Options Display & Selection Controls */}
+        <div className="mt-6 pt-6 border-t border-zinc-800/80 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                <MousePointerClick className="w-4 h-4 text-emerald-400" />
+                Select Default Betting Option
+              </div>
+              <p className="text-xs text-zinc-400">
+                Click an option card below to target it specifically, or use Both Options combined.
+              </p>
             </div>
-            <div className="space-y-1">
-              <div className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">
-                Default Option 1
-              </div>
-              <div className="text-sm font-semibold text-zinc-200">
-                Market: <span className="text-white font-mono">Multigoals</span>
-              </div>
-              <div className="text-xs text-emerald-400 font-mono font-bold">
-                Selection: 0-5{' '}
-                <span className="text-[11px] text-zinc-500 font-sans font-normal">
-                  (Single complete option)
-                </span>
-              </div>
+            <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setSelectedOptionMode('all')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                  selectedOptionMode === 'all'
+                    ? 'bg-emerald-500 text-zinc-950 font-bold shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Both Options
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedOptionMode('option1')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                  selectedOptionMode === 'option1'
+                    ? 'bg-emerald-500 text-zinc-950 font-bold shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Option 1 Only
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedOptionMode('option2')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                  selectedOptionMode === 'option2'
+                    ? 'bg-emerald-500 text-zinc-950 font-bold shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Option 2 Only
+              </button>
             </div>
           </div>
 
-          <div className="bg-zinc-950/50 p-4 rounded-xl border border-zinc-800/60 flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-bold text-emerald-400 shrink-0">
-              02
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Clickable Card 1: Default Option 1 */}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedOptionMode(selectedOptionMode === 'option1' ? 'all' : 'option1')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSelectedOptionMode(selectedOptionMode === 'option1' ? 'all' : 'option1');
+                }
+              }}
+              className={`p-4 rounded-xl border transition-all duration-200 cursor-pointer select-none group relative flex items-start gap-3.5 ${
+                selectedOptionMode === 'option1'
+                  ? 'bg-gradient-to-br from-emerald-950/60 to-zinc-950 border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/10'
+                  : selectedOptionMode === 'all'
+                  ? 'bg-zinc-950/70 border-emerald-700/50 hover:border-emerald-500 hover:bg-zinc-900/60'
+                  : 'bg-zinc-950/30 border-zinc-800/60 opacity-60 hover:opacity-100 hover:border-zinc-700'
+              }`}
+            >
+              <div
+                className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-black shrink-0 transition ${
+                  selectedOptionMode === 'option1'
+                    ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/30'
+                    : selectedOptionMode === 'all'
+                    ? 'bg-emerald-950 text-emerald-400 border border-emerald-700/60'
+                    : 'bg-zinc-800 text-zinc-400'
+                }`}
+              >
+                01
+              </div>
+
+              <div className="space-y-1 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs uppercase tracking-wider font-bold text-zinc-300">
+                    Default Option 1
+                  </div>
+                  {selectedOptionMode === 'option1' && (
+                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500 text-zinc-950 font-bold uppercase tracking-wider">
+                      <Check className="w-3 h-3 stroke-[3]" />
+                      Selected
+                    </span>
+                  )}
+                  {selectedOptionMode === 'all' && (
+                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-700/50 font-medium">
+                      <Check className="w-3 h-3" />
+                      Active in Scan
+                    </span>
+                  )}
+                  {selectedOptionMode === 'option2' && (
+                    <span className="text-[11px] text-zinc-500 group-hover:text-zinc-300 transition">
+                      Click to select
+                    </span>
+                  )}
+                </div>
+
+                <div className="text-sm font-semibold text-zinc-200">
+                  Market: <span className="text-white font-mono">Multigoals</span>
+                </div>
+                <div className="text-xs text-emerald-400 font-mono font-bold">
+                  Selection: 0-5{' '}
+                  <span className="text-[11px] text-zinc-500 font-sans font-normal">
+                    (Single complete option)
+                  </span>
+                </div>
+                <div className="text-[11px] text-zinc-400 pt-0.5">
+                  {selectedOptionMode === 'option1'
+                    ? '✓ AI will scan and generate bets using Multigoals 0-5 exclusively'
+                    : selectedOptionMode === 'all'
+                    ? 'Available for AI combinations (Click to isolate)'
+                    : 'Click to switch AI scanner to Option 1 only'}
+                </div>
+              </div>
             </div>
-            <div className="space-y-1">
-              <div className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">
-                Default Option 2
+
+            {/* Clickable Card 2: Default Option 2 */}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedOptionMode(selectedOptionMode === 'option2' ? 'all' : 'option2')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSelectedOptionMode(selectedOptionMode === 'option2' ? 'all' : 'option2');
+                }
+              }}
+              className={`p-4 rounded-xl border transition-all duration-200 cursor-pointer select-none group relative flex items-start gap-3.5 ${
+                selectedOptionMode === 'option2'
+                  ? 'bg-gradient-to-br from-emerald-950/60 to-zinc-950 border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/10'
+                  : selectedOptionMode === 'all'
+                  ? 'bg-zinc-950/70 border-emerald-700/50 hover:border-emerald-500 hover:bg-zinc-900/60'
+                  : 'bg-zinc-950/30 border-zinc-800/60 opacity-60 hover:opacity-100 hover:border-zinc-700'
+              }`}
+            >
+              <div
+                className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-black shrink-0 transition ${
+                  selectedOptionMode === 'option2'
+                    ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/30'
+                    : selectedOptionMode === 'all'
+                    ? 'bg-emerald-950 text-emerald-400 border border-emerald-700/60'
+                    : 'bg-zinc-800 text-zinc-400'
+                }`}
+              >
+                02
               </div>
-              <div className="text-sm font-semibold text-zinc-200">
-                Market: <span className="text-white font-mono">Multigoals 1 & Multigoals 2</span>
-              </div>
-              <div className="text-xs text-emerald-400 font-mono font-bold">
-                Selection: (1-4),(0-2){' '}
-                <span className="text-[11px] text-zinc-500 font-sans font-normal">
-                  (Atomic selection — not split)
-                </span>
+
+              <div className="space-y-1 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs uppercase tracking-wider font-bold text-zinc-300">
+                    Default Option 2
+                  </div>
+                  {selectedOptionMode === 'option2' && (
+                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500 text-zinc-950 font-bold uppercase tracking-wider">
+                      <Check className="w-3 h-3 stroke-[3]" />
+                      Selected
+                    </span>
+                  )}
+                  {selectedOptionMode === 'all' && (
+                    <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-700/50 font-medium">
+                      <Check className="w-3 h-3" />
+                      Active in Scan
+                    </span>
+                  )}
+                  {selectedOptionMode === 'option1' && (
+                    <span className="text-[11px] text-zinc-500 group-hover:text-zinc-300 transition">
+                      Click to select
+                    </span>
+                  )}
+                </div>
+
+                <div className="text-sm font-semibold text-zinc-200">
+                  Market: <span className="text-white font-mono">Multigoals 1 & Multigoals 2</span>
+                </div>
+                <div className="text-xs text-emerald-400 font-mono font-bold">
+                  Selection: (1-4),(0-2){' '}
+                  <span className="text-[11px] text-zinc-500 font-sans font-normal">
+                    (Atomic selection — not split)
+                  </span>
+                </div>
+                <div className="text-[11px] text-zinc-400 pt-0.5">
+                  {selectedOptionMode === 'option2'
+                    ? '✓ AI will scan and generate bets using Multigoals 1 & Multigoals 2 exclusively'
+                    : selectedOptionMode === 'all'
+                    ? 'Available for AI combinations (Click to isolate)'
+                    : 'Click to switch AI scanner to Option 2 only'}
+                </div>
               </div>
             </div>
           </div>
@@ -267,7 +491,11 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                GENERATE AI SELECTION
+                {selectedOptionMode === 'option1'
+                  ? 'GENERATE AI SELECTION (OPTION 1 ONLY)'
+                  : selectedOptionMode === 'option2'
+                  ? 'GENERATE AI SELECTION (OPTION 2 ONLY)'
+                  : 'GENERATE AI SELECTION'}
               </>
             )}
           </button>
@@ -361,13 +589,22 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
                   </div>
                 )}
               </div>
-              <div className="pt-2">
+              <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
                 <button
                   onClick={handleGenerate}
                   className="px-5 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-semibold transition cursor-pointer"
                 >
                   Rescan NiceBet Markets
                 </button>
+                {result.allCombinations && result.allCombinations.length > 0 && (
+                  <button
+                    onClick={() => setShowCombosModal(true)}
+                    className="px-5 py-2.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-sm font-semibold transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Layers className="w-4 h-4" />
+                    Inspect Combinations Audit ({result.totalCombinationsGenerated})
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -379,9 +616,24 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
                     <CheckCircle2 className="w-4 h-4" />
                     QUALIFIED COMBINATION GENERATED
                   </div>
-                  <h2 className="text-2xl font-black text-white tracking-tight">
-                    AI GENERATED SELECTION
-                  </h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-2xl font-black text-white tracking-tight">
+                      AI GENERATED SELECTION
+                    </h2>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      Source: https://www.nicebet.com.lr/
+                    </span>
+                    {result.selectedOption && (
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">
+                        {result.selectedOption === 'option1'
+                          ? 'Option 1 (Multigoals 0-5)'
+                          : result.selectedOption === 'option2'
+                          ? 'Option 2 (Multigoals 1 & 2)'
+                          : 'Both Options'}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-4 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
@@ -407,17 +659,37 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
 
               {/* Selections Cards */}
               <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs uppercase tracking-wider font-bold text-zinc-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    Active AI Selection ({result.selections.length} {result.selections.length === 1 ? 'Leg' : 'Legs'})
+                  </div>
+                  <span className="text-xs text-emerald-400 font-mono flex items-center gap-1">
+                    <CheckCheck className="w-3.5 h-3.5" />
+                    Picked from Candidate Combinations Audit
+                  </span>
+                </div>
+
                 {result.selections.map((sel, idx) => (
                   <div
                     key={sel.eventId + idx}
                     className="bg-zinc-950/80 rounded-xl border border-zinc-800 p-5 space-y-3 hover:border-zinc-700 transition"
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center justify-center">
                           {idx + 1}
                         </span>
                         <span className="text-base font-bold text-white">{sel.teams}</span>
+                        <a
+                          href="https://www.nicebet.com.lr/en/sports"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-700/50 px-2 py-0.5 rounded hover:bg-emerald-900/60 transition"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                          nicebet.com.lr
+                        </a>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-300 font-medium">
@@ -459,6 +731,172 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Candidate Combinations Audit Picker Section */}
+              <div className="bg-zinc-950/90 rounded-2xl border border-zinc-800 p-5 sm:p-6 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800/80">
+                  <div className="space-y-0.5">
+                    <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                      <Layers className="w-4 h-4" />
+                      Candidate Combinations Audit
+                    </div>
+                    <h3 className="text-base font-bold text-white tracking-tight">
+                      Pick from Evaluated Candidate Combinations
+                    </h3>
+                    <p className="text-xs text-zinc-400">
+                      The AI evaluated {result.totalCombinationsGenerated} combinations. Click{' '}
+                      <strong className="text-emerald-400">"Pick from here"</strong> on any qualifying candidate to select it.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-center">
+                    <button
+                      type="button"
+                      onClick={() => setAuditTab('qualifying')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                        auditTab === 'qualifying'
+                          ? 'bg-emerald-500 text-zinc-950 font-bold shadow-md shadow-emerald-500/20'
+                          : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+                      }`}
+                    >
+                      Qualifying ({result.qualifyingCombinationsCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAuditTab('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                        auditTab === 'all'
+                          ? 'bg-emerald-500 text-zinc-950 font-bold shadow-md shadow-emerald-500/20'
+                          : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+                      }`}
+                    >
+                      All ({result.totalCombinationsGenerated})
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filter Search */}
+                <div className="relative">
+                  <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={auditSearchQuery}
+                    onChange={(e) => setAuditSearchQuery(e.target.value)}
+                    placeholder="Search candidate combinations by team name (e.g. Portugal, Austria, Italy)..."
+                    className="w-full pl-10 pr-8 py-2 bg-zinc-900/80 border border-zinc-800 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 font-mono transition"
+                  />
+                  {auditSearchQuery && (
+                    <button
+                      onClick={() => setAuditSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-zinc-300"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Combinations List */}
+                <div className="max-h-96 overflow-y-auto space-y-2 pr-1">
+                  {filteredAuditCombos.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-zinc-500 border border-dashed border-zinc-800 rounded-xl">
+                      No combinations matching "{auditSearchQuery}".
+                    </div>
+                  ) : (
+                    filteredAuditCombos.map((combo, idx) => {
+                      const isCurrentActive =
+                        pickedComboId === combo.id ||
+                        (!pickedComboId && idx === 0 && combo.qualifies);
+
+                      return (
+                        <div
+                          key={combo.id || idx}
+                          className={`p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                            isCurrentActive
+                              ? 'bg-emerald-950/40 border-emerald-500 ring-1 ring-emerald-500/40 shadow-lg shadow-emerald-500/10'
+                              : combo.qualifies
+                              ? 'bg-zinc-900/70 border-zinc-800 hover:border-emerald-700/50 hover:bg-zinc-900'
+                              : 'bg-zinc-950/50 border-zinc-900/80 text-zinc-500 opacity-60'
+                          }`}
+                        >
+                          <div className="space-y-1 flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {combo.qualifies ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+                                  ✓ 2.00–2.14 CORRIDOR
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-zinc-800 text-zinc-400 font-mono">
+                                  REJECTED
+                                </span>
+                              )}
+
+                              {isCurrentActive && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-500 text-zinc-950 shadow-sm">
+                                  <Check className="w-3 h-3 stroke-[3]" />
+                                  ACTIVE AI PICK
+                                </span>
+                              )}
+
+                              <span className="text-[11px] text-zinc-500 font-mono">
+                                #{idx + 1} • {combo.selections.length} {combo.selections.length === 1 ? 'leg' : 'legs'}
+                              </span>
+
+                              {combo.statisticalScore !== undefined && (
+                                <span className="text-[11px] text-zinc-400 font-mono">
+                                  Score: {combo.statisticalScore}/100
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="text-xs font-semibold text-zinc-200 truncate">
+                              {combo.summary}
+                            </div>
+
+                            <div className="text-[11px] text-zinc-400 font-mono">
+                              {combo.reason}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-zinc-800/60">
+                            <div className="text-right">
+                              <span className="text-[10px] text-zinc-500 uppercase block font-semibold">
+                                Total Odds
+                              </span>
+                              <span
+                                className={`text-base font-mono font-black ${
+                                  combo.qualifies ? 'text-emerald-400' : 'text-zinc-500'
+                                }`}
+                              >
+                                {combo.odds.toFixed(2)}
+                              </span>
+                            </div>
+
+                            {combo.qualifies && (
+                              <div>
+                                {isCurrentActive ? (
+                                  <span className="px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center gap-1.5 cursor-default">
+                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                    Current Pick
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectAuditCombo(combo)}
+                                    className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-500/20 active:scale-95"
+                                  >
+                                    <MousePointerClick className="w-3.5 h-3.5" />
+                                    Pick from here
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
               {/* Combined Odds Calculation & Return */}
@@ -567,29 +1005,86 @@ export const AiAutoPickView: React.FC<AiAutoPickViewProps> = ({
               </button>
             </div>
 
-            <div className="p-5 overflow-y-auto space-y-2 text-xs font-mono">
-              {result.allCombinations.map((combo, idx) => (
-                <div
-                  key={idx}
-                  className={`p-3 rounded-lg border flex items-center justify-between gap-3 ${
-                    combo.qualifies
-                      ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-500'
-                  }`}
-                >
-                  <div className="truncate flex-1">
-                    <span className="text-zinc-300 font-semibold">{combo.summary}</span>
+            <div className="p-5 overflow-y-auto space-y-2 text-xs">
+              {result.allCombinations.map((combo, idx) => {
+                const isCurrentActive =
+                  pickedComboId === combo.id || (!pickedComboId && idx === 0 && combo.qualifies);
+
+                return (
+                  <div
+                    key={combo.id || idx}
+                    className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                      isCurrentActive
+                        ? 'bg-emerald-950/40 border-emerald-500 ring-1 ring-emerald-500/40'
+                        : combo.qualifies
+                        ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300 hover:border-emerald-500/60'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-500'
+                    }`}
+                  >
+                    <div className="space-y-1 flex-1 min-w-0 font-mono">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {combo.qualifies ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            QUALIFIED (2.00–2.14)
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-400">
+                            REJECTED
+                          </span>
+                        )}
+                        {isCurrentActive && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-500 text-zinc-950">
+                            ACTIVE PICK
+                          </span>
+                        )}
+                        {combo.statisticalScore !== undefined && (
+                          <span className="text-[10px] text-zinc-400">
+                            Score: {combo.statisticalScore}/100
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-zinc-200 font-semibold truncate">{combo.summary}</div>
+                      <div className="text-[10px] text-zinc-400">{combo.reason}</div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                      <div className="text-right font-mono">
+                        <div
+                          className={`font-bold text-sm ${
+                            combo.qualifies ? 'text-emerald-400' : 'text-zinc-500'
+                          }`}
+                        >
+                          {combo.odds.toFixed(2)}
+                        </div>
+                        <div className="text-[10px] text-zinc-500">odds</div>
+                      </div>
+
+                      {combo.qualifies && (
+                        <div>
+                          {isCurrentActive ? (
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-bold text-xs flex items-center gap-1 border border-emerald-500/30">
+                              <Check className="w-3.5 h-3.5" />
+                              Active
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleSelectAuditCombo(combo);
+                                setShowCombosModal(false);
+                              }}
+                              className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs transition cursor-pointer flex items-center gap-1 shadow"
+                            >
+                              <MousePointerClick className="w-3.5 h-3.5" />
+                              Pick this
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right shrink-0">
-                    <span
-                      className={`font-bold ${combo.qualifies ? 'text-emerald-400' : 'text-zinc-500'}`}
-                    >
-                      Odds: {combo.odds.toFixed(2)}
-                    </span>
-                    <span className="block text-[10px] text-zinc-400">{combo.reason}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="p-4 border-t border-zinc-800 bg-zinc-950 text-right">

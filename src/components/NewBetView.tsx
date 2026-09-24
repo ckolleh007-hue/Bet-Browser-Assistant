@@ -22,6 +22,11 @@ Portugal vs Wales
 Market: Multigoals
 Selection: 0-5`;
 
+const PRESET_OPTION2 = `Prepare a $10 bet:
+Norway vs Denmark
+Market: Multigoals 1 & Multigoals 2
+Selection: (1-4),(0-2)`;
+
 const PRESET_LRD_MULTI = `Prepare a 500 LRD bet:
 Portugal vs Wales
 Market: Multigoals
@@ -164,6 +169,12 @@ export const NewBetView: React.FC<NewBetViewProps> = ({ onAgentStarted }) => {
           className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs border border-zinc-800 transition"
         >
           Option 1: Multigoals (0-5)
+        </button>
+        <button
+          onClick={() => setRawText(PRESET_OPTION2)}
+          className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs border border-zinc-800 transition"
+        >
+          Option 2: Multigoals 1 & 2 ((1-4),(0-2))
         </button>
         <button
           onClick={() => setRawText(PRESET_LRD_MULTI)}

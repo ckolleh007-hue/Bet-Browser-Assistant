@@ -150,8 +150,32 @@ export interface CandidateCombination {
   statisticalScore: number;
 }
 
+export interface CandidateCombinationAuditItem {
+  id: string;
+  summary: string;
+  odds: number;
+  qualifies: boolean;
+  reason: string;
+  statisticalScore?: number;
+  averageConfidence?: number;
+  selections: Array<{
+    eventId: string;
+    teams: string;
+    market: string;
+    selection: string;
+    odds: number;
+    analysis: string;
+    confidence: number;
+    statsSummary?: string;
+    source?: string;
+    liveMatchUrl?: string;
+  }>;
+}
+
 export interface AiAutoPickResponse {
   mode: 'AI_AUTO_PICK';
+  source?: string;
+  selectedOption?: 'all' | 'option1' | 'option2';
   targetOdds: {
     min: number;
     max: number;
@@ -167,6 +191,8 @@ export interface AiAutoPickResponse {
     analysis: string;
     confidence: number;
     statsSummary?: string;
+    source?: string;
+    liveMatchUrl?: string;
   }>;
   combinedOdds: number;
   status: 'QUALIFIED' | 'NO_QUALIFYING_SELECTION';
@@ -175,12 +201,7 @@ export interface AiAutoPickResponse {
   totalCandidatesEvaluated: number;
   totalCombinationsGenerated: number;
   qualifyingCombinationsCount: number;
-  allCombinations: Array<{
-    summary: string;
-    odds: number;
-    qualifies: boolean;
-    reason: string;
-  }>;
+  allCombinations: CandidateCombinationAuditItem[];
   auditTrail: string[];
 }
 

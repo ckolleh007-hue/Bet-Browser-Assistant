@@ -15,11 +15,13 @@ let latestAutoPickResult: any = null;
 // filters for total odds in [2.00, 2.14], and returns the best qualifying selection.
 router.post('/generate', async (req: Request, res: Response) => {
   try {
-    const { stake = 10, currency = 'USD' } = req.body;
+    const { stake = 10, currency = 'USD', optionFilter = 'all' } = req.body;
     const numStake = Number(stake) > 0 ? Number(stake) : 10;
     const strCurrency = typeof currency === 'string' ? currency.toUpperCase() : 'USD';
+    const validOptionFilter: 'all' | 'option1' | 'option2' =
+      optionFilter === 'option1' || optionFilter === 'option2' ? optionFilter : 'all';
 
-    const result = await aiAutoPickService.generateAutoPick(numStake, strCurrency);
+    const result = await aiAutoPickService.generateAutoPick(numStake, strCurrency, validOptionFilter);
     latestAutoPickResult = result;
 
     res.json({
